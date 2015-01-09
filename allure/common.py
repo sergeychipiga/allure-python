@@ -80,6 +80,8 @@ class AllureImpl(object):
 
     """
 
+    suite_postfix = 'testsuite.xml'
+
     def __init__(self, logdir):
         self.logdir = os.path.normpath(os.path.abspath(os.path.expanduser(os.path.expandvars(logdir))))
 
@@ -151,6 +153,10 @@ class AllureImpl(object):
 
         If either ``message`` or ``trace`` are given adds a ``Failure`` object to the test with them.
         """
+
+        if not self.stack:
+            return
+
         test = self.stack[-1]
         test.status = status
         test.stop = now()
@@ -179,7 +185,7 @@ class AllureImpl(object):
         """
         self.testsuite.stop = now()
 
-        with self._reportfile('%s-testsuite.xml' % uuid.uuid4()) as f:
+        with self._reportfile('%s-%s' % (uuid.uuid4(), self.suite_postfix)) as f:
             self._write_xml(f, self.testsuite)
 
     def store_environment(self):
@@ -192,6 +198,49 @@ class AllureImpl(object):
 
         with self._reportfile('environment.xml') as f:
             self._write_xml(f, environment)
+
+    def merge_reports(self):
+        reports = []
+        for file_name in os.listdir(self.logdir):
+            if not file_name.endswith(self.suite_postfix):
+                continue
+            file_path = os.path.join(self.logdir, file_name)
+            reports.append(etree.parse(file_path))
+            os.remove(file_path)
+
+        def get_test_case_name(xml):
+            for el in xml.getroot().getchildren():
+                if el.tag == 'name':
+                    return el.text
+
+        def get_test_cases(xml):
+            for el in xml.getroot().getchildren():
+                if el.tag == 'test-cases':
+                    return el
+
+        while reports:
+            target = reports.pop()
+            target_name = get_test_case_name(target)
+            target_cases = get_test_cases(target)
+            target_root = target.getroot()
+
+            for report in reports[:]:
+                if target_name == get_test_case_name(report):
+                    report_cases = get_test_cases(report)
+                    target_cases.extend(report_cases)
+
+                    report_root = report.getroot()
+
+                    if long(target_root.attrib['start']) > long(report_root.attrib['start']):
+                        target_root.attrib['start'] = report_root.attrib['start']
+
+                    if long(target_root.attrib['stop']) < long(report_root.attrib['stop']):
+                        target_root.attrib['stop'] = report_root.attrib['stop']
+
+                    reports.remove(report)
+
+            with self._reportfile('%s-%s' % (uuid.uuid4(), self.suite_postfix)) as f:
+                self._write_xml(f, target, toxml=False)
 
     def _save_attach(self, body, attach_type=AttachmentType.TEXT):
         """
@@ -231,5 +280,7 @@ class AllureImpl(object):
         finally:
             logfile.close()
 
-    def _write_xml(self, logfile, xmlfied):
-        logfile.write(etree.tostring(xmlfied.toxml(), pretty_print=True, xml_declaration=False, encoding=unicode))
+    def _write_xml(self, logfile, xmlfied, toxml=True):
+        if toxml:
+            xmlfied = xmlfied.toxml()
+        logfile.write(etree.tostring(xmlfied, pretty_print=True, xml_declaration=False, encoding=unicode))

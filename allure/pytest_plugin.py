@@ -21,6 +21,12 @@ def pytest_addoption(parser):
                                            default=None,
                                            help="Generate Allure report in the specified directory (may not exist)")
 
+    parser.getgroup("reporting").addoption('--merge',
+                                           action="store_true",
+                                           dest="mergereports",
+                                           default=False,
+                                           help="Merge allure reports (need for parallel tests execution)")
+
     severities = [v for (_, v) in all_of(Severity)]
 
     def severity_label_type(string):
@@ -69,7 +75,7 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     reportdir = config.option.allurereportdir
-    if reportdir and not hasattr(config, 'slaveinput'):
+    if reportdir:
         config._allurelistener = AllureTestListener(reportdir, config)
         config.pluginmanager.register(config._allurelistener)
         config.pluginmanager.register(AllureCollectionListener(reportdir))
@@ -309,9 +315,12 @@ class AllureTestListener(object):
         """
 
         report = __multicall__.execute()
-        report.__dict__.update(
-            exception=call.excinfo,
-            result=self.config.hook.pytest_report_teststatus(report=report)[0])  # get the failed/passed/xpassed thingy
+
+        if self.config.hook.pytest_report_teststatus(report=report):
+            report.__dict__.update(
+                exception=call.excinfo,
+                result=self.config.hook.pytest_report_teststatus(report=report)[0])  # get the failed/passed/xpassed thingy
+
         return report
 
     def pytest_sessionfinish(self):
@@ -319,6 +328,9 @@ class AllureTestListener(object):
             self.impl.stop_suite()
             self.testsuite = None
         self.impl.store_environment()
+
+        if self.config.option.mergereports:
+            self.impl.merge_reports()
 
 
 CollectFail = namedtuple('CollectFail', 'name status message trace')

@@ -155,3 +155,6 @@ class LabelsList(list):
 
     def __str__(self):
         return ', '.join(map(str, [(el.name, el.value) for el in self]))
+
+
+LabelsList.__name__ = 'list'
